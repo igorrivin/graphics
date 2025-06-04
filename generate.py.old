@@ -1,0 +1,122 @@
+from PIL import Image
+import math
+import subprocess
+import sys
+import argparse
+import numpy as np
+from stl import Mesh
+
+# Get the image path from command line arguments
+if len(sys.argv) < 2:
+    print("Usage: python generate.py <image_path>")
+    sys.exit(1)
+
+# Set up argument parser
+parser = argparse.ArgumentParser(description="Generate a 3D embossed cylinder from an image.")
+parser.add_argument("image_path", help="Path to the input image")
+parser.add_argument("--height", type=float, default=20, help="Height of the cylinder (default: 20)")
+parser.add_argument("--radius", type=float, default=5, help="Radius of the cylinder (default: 5)")
+parser.add_argument("--emboss_depth", type=float, default=0.5, help="Depth of the embossing (default: 0.5)")
+parser.add_argument("--fn", type=int, default=200, help="Number of faces on the side of a circle (default: 200)")
+parser.add_argument("--fh", type=int, default=200, help="Number of faces vertically (default: 200)")
+
+# Parse arguments
+args = parser.parse_args()
+
+# Assign parsed arguments to variables
+image_path = args.image_path
+cylinder_height = args.height
+cylinder_radius = args.radius
+
+
+# number of faces on the side of a circle
+fn = args.fn
+# number of faces vertically
+fh = args.fh
+emboss_depth = args.emboss_depth
+
+image = Image.open(image_path)
+
+# Convert the image to greyscale
+greyscale_image = image.convert("L")
+
+# Rescale the image to fn x fh pixels
+rescaled_image = greyscale_image.resize((fn, fh))
+
+# Create a list to store the 3D points
+points = []
+
+# Calculate the angle step for each pixel column
+angle_step = 2 * math.pi / fn
+
+# Calculate the height step for each pixel row
+height_step = cylinder_height / fh
+
+# Map each pixel to the cylinder surface
+for y in range(fh):
+    for x in range(fn):
+        # Get the greyscale value of the pixel (0-255)
+        pixel_value = rescaled_image.getpixel((x, y))
+        
+        # Calculate the distance from the cylinder's axis based on the pixel value
+        distance_from_axis = cylinder_radius + (pixel_value / 255.0) * emboss_depth
+        
+        # Calculate the angle for the current pixel column
+        angle = x * angle_step
+        
+        # Calculate the 3D coordinates
+        px = distance_from_axis * math.cos(angle)
+        py = distance_from_axis * math.sin(angle)
+        pz = y * height_step
+        
+        # Add the point to the list
+        points.append((px, py, pz))
+
+
+# Create a list to store the faces
+faces = []
+
+# Define the faces using the indices of the points list
+for y in range(fh - 1):
+    for x in range(fn):
+        # Calculate the indices of the four corners of each face
+        p1 = y * fn + x
+        p2 = y * fn + (x + 1) % fn
+        p3 = (y + 1) * fn + (x + 1) % fn
+        p4 = (y + 1) * fn + x
+            
+        # Add the face (as a quad) to the list
+        faces.append((p1, p2, p3))
+        faces.append((p1, p3, p4))
+
+# Add the top face (as a fan) to the list
+top_center_index = len(points)
+points.append((0, 0, cylinder_height))
+for x in range(fn):
+    p1 = (fh - 1) * fn + x
+    p2 = (fh - 1) * fn + (x + 1) % fn
+    faces.append((top_center_index, p1, p2))
+
+# Add the bottom face (as a fan) to the list
+bottom_center_index = len(points)
+points.append((0, 0, 0))
+for x in range(fn):
+    p1 = x
+    p2 = (x + 1) % fn
+    faces.append((bottom_center_index, p1, p2))
+
+output_stl = image_path.rsplit('.', 1)[0] + ".stl"
+
+# Convert points and faces to numpy arrays
+points_array = np.array(points)
+faces_array = np.array(faces)
+
+# Create the mesh
+cylinder_mesh = Mesh(np.zeros(faces_array.shape[0], dtype=Mesh.dtype))
+
+for i, face in enumerate(faces_array):
+    for j in range(3):
+        cylinder_mesh.vectors[i][j] = points_array[face[j], :]
+
+# Save the mesh to file
+cylinder_mesh.save(output_stl)
